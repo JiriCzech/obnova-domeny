@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <title>Karanténa domény</title>
+</head>
+<body>
+  <input id="domain" placeholder="example.com">
+  <button onclick="checkDomain()">Zkontrolovat</button>
+  <pre id="output"></pre>
+
+  <script>
+async function checkDomain() {
+  const domain = document.getElementById("domain").value.trim();
+  if (!domain) return;
+
+  const proxy = "https://corsproxy.io/?";
+  const url = `https://www.whois.com/whois/${domain}`;
+
+  try {
+    const response = await fetch(proxy + encodeURIComponent(url));
+    const html = await response.text();
+
+    // 1) zjistíme TLD
+    const tld = domain.split(".").pop().toLowerCase();
+
+    // 2) připravíme proměnnou na datum expirace
+    let expiry = null;
+
+    // 3) kontrola "není registrována"
+    if (/No match for|NOT FOUND/i.test(html)) {
+      document.getElementById("output").textContent = domain + " → Doména není registrovaná";
+      return;
+    }
+
+    if (tld === "com" || tld === "net" || tld === "org" || tld === "info") {
+      // klasická struktura: <div class="df-label">Expires On:</div><div class="df-value">2026-08-13</div>
+      const match = html.match(/<div class="df-label">Expires On:<\/div>\s*<div class="df-value">([^<]+)<\/div>/i);
+      if (match) expiry = match[1].trim();
+    } else if (tld === "cz") {
+      // CZ domény: v registryData je "expire:       05.07.2025"
+      const match = html.match(/expire:\s+([0-9]{2}\.[0-9]{2}\.[0-9]{4})/i);
+      if (match) {
+        // převedeme na YYYY-MM-DD
+        const [d, m, y] = match[1].split(".");
+        expiry = `${y}-${m}-${d}`;
+      }
+    } else if (tld === "sk") {
+      // SK domény: v registryData je "Valid Until:  2026-04-22"
+      const match = html.match(/Valid Until:\s+([0-9-]+)/i);
+      if (match) expiry = match[1].trim();
+    }
+
+    let result;
+    if (expiry) {
+      const expiryDate = new Date(expiry);
+      const today = new Date();
+      const diffDays = Math.floor((expiryDate - today) / (1000 * 60 * 60 * 24));
+
+      if (diffDays > 0) {
+        result = `${domain} → Expirace: ${expiry}, stav: Není v karanténě (zbývá ${diffDays} dní)`;
+      } else if (diffDays >= -42) {
+        result = `${domain} → Expirace: ${expiry}, stav: 0-42 days grace renewal (${Math.abs(diffDays)} dní po expiraci)`;
+      } else if (diffDays >= -72) {
+        result = `${domain} → Expirace: ${expiry}, stav: 43-72 classic quarantine (${Math.abs(diffDays)} dní po expiraci)`;
+      } else {
+        result = `${domain} → Expirace: ${expiry}, stav: Po karanténě (pending delete)`;
+      }
+    } else {
+      result = domain + " → Nepodařilo se najít datum expirace";
+    }
+
+    document.getElementById("output").textContent = result;
+
+  } catch (err) {
+    document.getElementById("output").textContent = domain + " → Chyba: " + err.message;
+  }
+}
+  </script>
+</body>
+</html>
